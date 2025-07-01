@@ -19,3 +19,4 @@ langchain-pinecone
 youtube_search
 duckduckgo-search
 yfinance
+langgraph
