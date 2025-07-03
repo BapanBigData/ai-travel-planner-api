@@ -20,3 +20,7 @@ youtube_search
 duckduckgo-search
 yfinance
 langgraph
+fastapi
+uvicorn
+jinja2 
+python-multipart
