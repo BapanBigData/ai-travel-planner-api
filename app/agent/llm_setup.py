@@ -1,6 +1,7 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
-from langchain_community.tools import DuckDuckGoSearchRun, TavilySearchResults
+from langchain_tavily import TavilySearch
+from langchain_community.tools import DuckDuckGoSearchRun
 from app.agent.tools import get_places, get_hotels_by_city, get_flight_fares, convert_currency, get_weather
 from langchain_core.messages import SystemMessage
 from langgraph.graph import MessagesState
@@ -21,7 +22,7 @@ llm = ChatOpenAI(
 )
 
 
-tavily_tool = TavilySearchResults(api_key=tavily_key)
+tavily_tool = TavilySearch(api_key=tavily_key)
 
 
 tools = [
