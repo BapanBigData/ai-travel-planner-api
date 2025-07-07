@@ -28,6 +28,7 @@ tools = [
 
 llm_with_tools = llm.bind_tools(tools)
 
+
 TOOL_EDUCATION_SYSTEM_MESSAGE = SystemMessage(content="""
 You are an AI-powered travel planning assistant.
 
