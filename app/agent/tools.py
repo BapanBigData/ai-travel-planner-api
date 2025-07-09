@@ -1,4 +1,5 @@
 import os
+import math
 import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -68,90 +69,133 @@ def get_places(city: str, query: str = "attractions") -> list:
     return extracted
 
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate great-circle distance between two points on Earth."""
+    R = 6371  # Earth radius in kilometers
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
 @tool
-def get_hotels_by_city(city: str) -> list:
+def get_hotels_by_area_and_radius(
+    bbox: str,
+    arrival_date: str,
+    departure_date: str,
+    star_rating: str = "3,4,5",
+    room_qty: int = 1,
+    guest_qty: int = 1,
+    children_qty: int = 0,
+    children_age: str = "",
+    currency: str = "USD",
+    order_by: str = "popularity",
+    categories_filter: str = "class::1,class::2,class::3",
+    language: str = "en-us",
+    travel_purpose: str = "leisure",
+    offset: int = 0
+) -> list:
     """
-    Get top hotels with prices per night in INR for the given city using Hotels4 (RapidAPI).
-    
+    Fetch hotel listings within a bounding box and return only key fields, sorted by distance to bbox center.
+
     Parameters:
-        city (str): City name (e.g., "Kolkata")
+        - bbox (str): Bounding box in format "min_lat,max_lat,min_lng,max_lng"
+        - star_rating (str): Comma-separated star classes to filter, e.g., "3,4,5"
+        - arrival_date (str): Check-in date (YYYY-MM-DD)
+        - departure_date (str): Check-out date (YYYY-MM-DD)
+        - room_qty (int): Number of rooms
+        - guest_qty (int): Number of adults
+        - children_qty (int): Number of children
+        - children_age (str): Comma-separated list of children ages
+        - currency (str): Price currency (e.g., USD, INR)
+        - order_by (str): API sort preference (not used post-filter)
+        - categories_filter (str): Used internally, overridden by star_rating
+        - language (str): Response language
+        - travel_purpose (str): "leisure" or "business"
+        - offset (int): Pagination offset
 
     Returns:
-        list: List of hotels with name, price, and address
+        - list of hotel dicts sorted by ascending distance from bbox center.
     """
 
+    # Convert star_rating to API-compatible format
+    categories_filter = ",".join([f"class::{s.strip()}" for s in star_rating.split(",")])
+
+    # Compute bbox center
+    try:
+        min_lat, max_lat, min_lng, max_lng = map(float, bbox.split(","))
+        center_lat = (min_lat + max_lat) / 2
+        center_lng = (min_lng + max_lng) / 2
+    except Exception as e:
+        return [{"error": f"Invalid bbox format: {e}"}]
+
+    url = "https://apidojo-booking-v1.p.rapidapi.com/properties/list-by-map"
+    querystring = {
+        "room_qty": str(room_qty),
+        "guest_qty": str(guest_qty),
+        "bbox": bbox,
+        "search_id": "none",
+        "children_age": children_age,
+        "price_filter_currencycode": currency,
+        "categories_filter": categories_filter,
+        "languagecode": language,
+        "travel_purpose": travel_purpose,
+        "children_qty": str(children_qty),
+        "order_by": order_by,
+        "offset": str(offset),
+        "arrival_date": arrival_date,
+        "departure_date": departure_date
+    }
     headers = {
         "x-rapidapi-key": os.getenv("RAPIDAPI_KEY_HOTELS"),
-        "x-rapidapi-host": "hotels4.p.rapidapi.com"
+        "x-rapidapi-host": "apidojo-booking-v1.p.rapidapi.com"
     }
 
-    # Step 1: Get gaiaId (destination identifier)
-    location_url = "https://hotels4.p.rapidapi.com/locations/v3/search"
-    location_params = {
-        "q": city,
-        "locale": "en_US",
-        "langid": "1033",
-        "siteid": "3000000"
-    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code != 200:
+        return [{"error": response.text}]
 
-    location_resp = requests.get(location_url, headers=headers, params=location_params)
-    if location_resp.status_code != 200:
-        return [{"error": f"Location fetch failed: {location_resp.text}"}]
+    results = response.json().get("result", [])
+    hotels = []
 
-    try:
-        gaia_id = location_resp.json()["sr"][0]["gaiaId"]
-    except Exception:
-        return [{"error": f"Could not find destination ID for city: {city}"}]
+    for item in results:
+        if not item.get("class"):
+            continue
 
-    # Step 2: Get hotel list for destination
-    hotel_url = "https://hotels4.p.rapidapi.com/properties/v2/list"
-    today = datetime.today()
+        lat = item.get("latitude")
+        lng = item.get("longitude")
+        if lat is None or lng is None:
+            continue
 
-    payload = {
-        "currency": "INR",
-        "locale": "en_US",
-        "siteId": 3000000,
-        "destination": {"regionId": gaia_id},
-        "checkInDate": {
-            "day": today.day,
-            "month": today.month,
-            "year": today.year
-        },
-        "checkOutDate": {
-            "day": (today + timedelta(days=1)).day,
-            "month": (today + timedelta(days=1)).month,
-            "year": (today + timedelta(days=1)).year
-        },
-        "rooms": [{"adults": 1}],
-        "resultsStartingIndex": 0,
-        "resultsSize": 20,
-        # "sort": "PRICE_LOW_TO_HIGH",
-        "filters": {}
-    }
+        distance_km = haversine_distance(center_lat, center_lng, lat, lng)
 
-    hotel_resp = requests.post(hotel_url, json=payload, headers=headers)
-    if hotel_resp.status_code != 200:
-        return [{"error": f"Hotel list fetch failed: {hotel_resp.text}"}]
-
-    hotels_raw = hotel_resp.json().get("data", {}).get("propertySearch", {}).get("properties", [])
-    if not hotels_raw:
-        return [{"message": f"No hotel results found in {city}"}]
-
-    results = []
-    for hotel in hotels_raw:
-        # print(hotel)
-        # print('*'*50)
-        # print()
-        name = hotel.get("name")
-        address = hotel.get("address", {}).get("addressLine", "No address provided")
-        price = hotel.get("price", {}).get("lead", {}).get("formatted", "N/A")
-        results.append({
-            "name": name,
-            "address": address,
-            "price_per_night": price
+        hotels.append({
+            "name": item.get("hotel_name"),
+            "star_rating": item.get("class"),
+            "review_score": item.get("review_score"),
+            "review_word": item.get("review_score_word"),
+            "review_count": item.get("review_nr"),
+            "address": item.get("address"),
+            "city": item.get("city"),
+            "district": item.get("district"),
+            "latitude": lat,
+            "longitude": lng,
+            "price_per_night": item.get("min_total_price") or (
+                item.get("price_breakdown", {}).get("all_inclusive_price")
+            ),
+            "image": item.get("main_photo_url"),
+            "booking_url": item.get("url"),
+            "is_free_cancellable": item.get("is_free_cancellable"),
+            "is_mobile_deal": item.get("is_mobile_deal"),
+            "checkin_from": item.get("checkin", {}).get("from"),
+            "checkout_until": item.get("checkout", {}).get("until"),
+            "distance_km": round(distance_km, 2)
         })
 
-    return results
+    # Sort by distance from bbox center
+    hotels.sort(key=lambda h: h["distance_km"])
+    return hotels
 
 
 @tool

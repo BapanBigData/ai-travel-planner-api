@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from langchain_tavily import TavilySearch
 from langchain_community.tools import DuckDuckGoSearchRun
-from app.agent.tools import get_places, get_hotels_by_city, get_flight_fares, convert_currency, get_weather
+from app.agent.tools import get_places, get_hotels_by_area_and_radius, get_flight_fares, convert_currency, get_weather
 from langgraph.graph import MessagesState
 import os
 from dotenv import load_dotenv
@@ -14,14 +14,14 @@ tavily_key = os.getenv("TAVILY_API_KEY")
 
 llm = ChatOpenAI(
     model="gpt-4o-mini", 
-    temperature=0.3,
+    temperature=0.0,
     api_key=openai_key
 )
 
 tavily_tool = TavilySearch(api_key=tavily_key)
 
 tools = [
-    get_places, get_hotels_by_city, get_flight_fares,
+    get_places, get_hotels_by_area_and_radius, get_flight_fares,
     convert_currency, get_weather,
     DuckDuckGoSearchRun(), tavily_tool
 ]
@@ -35,10 +35,21 @@ You are an AI-powered travel planning assistant.
 You have access to a set of real-time tools. Always prefer calling these tools over using your internal knowledge, especially for up-to-date or location-specific information.
 
 🧭 get_places(city, query): Use to find top attractions, restaurants, or activities in any city.
-🏨 get_hotels_by_city(city): Use to fetch real-time hotel listings and price per night in INR.
+
+🏨 get_hotels_by_area_and_radius(bbox, arrival_date, departure_date, star_rating):
+- Use to fetch real-time hotel listings near a specific area.
+- You must always provide a valid 'bbox' (bounding box) value.
+- If the user provides a **place name** (e.g., "Park Street, Kolkata" or "USF, Florida"), you must estimate a bbox string centered around that place, with a radius of ~5 km.
+- The bbox format is: `"min_lat,max_lat,min_lng,max_lng"`, where lat/lng are decimal degrees.
+- If you're unsure, estimate the coordinates using your internal knowledge and expand 5 km in all directions (approx. ±0.045 degrees latitude and longitude).
+- Only use star_rating values from 1 to 5, or a comma-separated list like "3,4,5".
+
 ✈️ get_flight_fares(from_code, to_code, date): Use to find real-time flight fares between two cities.
+
 💱 convert_currency(amount, to_currency, base): Use this for ALL currency conversions.
+
 🌦 get_weather(city): Use to get the current weather and temperature for any city.
+
 🔍 DuckDuckGoSearchRun and TavilySearch: Use these tools to get the latest info or safety alerts.
 
 📌 VERY IMPORTANT: Return all your answers in clean **HTML format** suitable for rendering in a browser.
