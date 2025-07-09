@@ -7,7 +7,7 @@ echo "🔧 Installing system dependencies..."
 apt update && apt install -y wget curl git make build-essential \
   libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
   libsqlite3-dev libncursesw5-dev libgdbm-dev liblzma-dev \
-  libffi-dev uuid-dev libdb-dev libexpat1-dev libmpdec-dev \
+  libffi-dev uuid-dev libdb-dev libexpat1-dev \
   libgmp-dev tk-dev
 
 # STEP 2: Install Python 3.10.0
