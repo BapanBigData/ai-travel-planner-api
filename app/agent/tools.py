@@ -131,6 +131,7 @@ def get_hotels_by_area_and_radius(
         return [{"error": f"Invalid bbox format: {e}"}]
 
     url = "https://apidojo-booking-v1.p.rapidapi.com/properties/list-by-map"
+    
     querystring = {
         "room_qty": str(room_qty),
         "guest_qty": str(guest_qty),
@@ -184,6 +185,7 @@ def get_hotels_by_area_and_radius(
             "price_per_night": item.get("min_total_price") or (
                 item.get("price_breakdown", {}).get("all_inclusive_price")
             ),
+            "currency": item.get("currencycode", currency),
             "image": item.get("main_photo_url"),
             "booking_url": item.get("url"),
             "is_free_cancellable": item.get("is_free_cancellable"),
@@ -282,7 +284,8 @@ def get_flight_fares(from_code: str, to_code: str, date: str, adult: int = 1, ty
     Returns:
         list: List of flights with key details: timing, pricing, stops, countries, and cabin info.
     """
-    url = "https://flight-fare-search.p.rapidapi.com/v2/flights/"
+    
+    url = "https://flight-fare-search.p.rapidapi.com/v2/flights"
 
     querystring = {
         "from": from_code,
