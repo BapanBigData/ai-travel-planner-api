@@ -8,6 +8,7 @@ from app.agent.graph import app as travel_graph
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+import asyncio
 
 app = FastAPI()
 
@@ -46,6 +47,7 @@ def plan_trip(query: TravelQuery):
     except Exception as e:
         print("❌ Error in /plan-trip:", str(e))
         return {"response": "⚠️ Sorry, something went wrong on the server."}
+
 
 # ✅ Serve the UI
 @app.get("/")

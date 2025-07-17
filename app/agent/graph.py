@@ -1,15 +1,32 @@
-from langgraph.graph import StateGraph, MessagesState, START
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph import StateGraph, START, END  
 from langgraph.checkpoint.memory import MemorySaver
-from app.agent.llm_setup import call_llm_with_tool_bind, tools
+from app.agent.router import State
+from app.agent.agent import *
 
+# Define the graph
+graph = StateGraph(State)
 
-workflow = StateGraph(MessagesState)
-workflow.add_node("llm_with_tools", call_llm_with_tool_bind)
-workflow.add_node("tools", ToolNode(tools))
-workflow.add_edge(START, "llm_with_tools")
-workflow.add_conditional_edges("llm_with_tools", tools_condition)
-workflow.add_edge("tools", "llm_with_tools")
+# Add nodes
+graph.add_node("supervisor", supervisor)
+graph.add_node("hotel_search_expert", hotel_search_agent)
+graph.add_node("weather_expert", weather_agent)
+graph.add_node("place_search_expert", place_search_agent)
+graph.add_node("flight_fares_search_expert", flight_fares_search_agent)
+graph.add_node("geolocation_expert", geolocation_agent)
 
+# Initial entry point
+graph.add_edge(START, "supervisor")
+
+# Return control to supervisor after each expert agent runs
+graph.add_edge("hotel_search_expert", "supervisor")
+graph.add_edge("weather_expert", "supervisor")
+graph.add_edge("place_search_expert", "supervisor")
+graph.add_edge("flight_fares_search_expert", "supervisor")
+graph.add_edge("geolocation_expert", "supervisor")
+
+# ✅ Add this missing edge so that "FINISH" works correctly
+graph.add_edge("supervisor", END)
+
+# Compile graph
 memory = MemorySaver()
-app = workflow.compile(checkpointer=memory)
+app = graph.compile(checkpointer=memory)

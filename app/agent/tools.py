@@ -4,8 +4,75 @@ import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from langchain_core.tools import tool
+from typing import Optional
+
 
 load_dotenv()
+
+def get_geocode_locationiq(place):
+    url = "https://us1.locationiq.com/v1/search.php"
+    params = {
+        "key": os.getenv("GEOLOCATION_IQ_API_KEY"),  
+        "q": place,
+        "format": "json"
+    }
+    res = requests.get(url, params=params)
+    data = res.json()
+    if data:
+        return float(data[0]["lat"]), float(data[0]["lon"])
+    else:
+        return None
+
+
+@tool
+def geocode_locationiq(place: str) -> dict:
+    """
+    Geocode a human-readable place name into geographic coordinates using LocationIQ API.
+
+    This tool takes a location name (e.g., "Park Street, Kolkata" or "USF, Tampa") 
+    and returns geospatial metadata including its bounding box, latitude, longitude, 
+    display name, and location type.
+
+    Parameters:
+        place (str): The name of the location to geocode.
+
+    Returns:
+        dict: A dictionary containing the following keys:
+            - 'boundingbox': List of [min_lat, max_lat, min_lng, max_lng]
+            - 'lat': Latitude of the place (float)
+            - 'lon': Longitude of the place (float)
+            - 'display_name': Full formatted address (str)
+            - 'type': Type of place (e.g., 'university', 'neighbourhood')
+            
+        If geocoding fails, a dictionary with an 'error' key is returned.
+    """
+    
+    url = "https://us1.locationiq.com/v1/search.php"
+    params = {
+        "key": os.getenv("GEOLOCATION_IQ_API_KEY"),
+        "q": place,
+        "format": "json"
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data:
+            return {"error": f"No result found for place: {place}"}
+
+        first_result = data[0]
+        return {
+            "boundingbox": first_result.get("boundingbox"),
+            "lat": float(first_result.get("lat")),
+            "lon": float(first_result.get("lon")),
+            "display_name": first_result.get("display_name"),
+            "type": first_result.get("type")
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @tool
@@ -54,7 +121,10 @@ def get_places(city: str, query: str = "attractions") -> list:
     for place in results:
         name = place.get("name", "Unknown")
         categories = [cat.get("name") for cat in place.get("categories", [])]
+        
         address = place['location']['formatted_address']
+        lat, lon = get_geocode_locationiq(address)
+        
         phone = place.get("tel", None)
         website = place.get("website", None)
 
@@ -62,6 +132,8 @@ def get_places(city: str, query: str = "attractions") -> list:
             "name": name,
             "categories": categories,
             "address": address,
+            "latitude": lat,
+            "longitude": lon,
             "phone": phone,
             "website": website
         })
@@ -82,8 +154,8 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 @tool
 def get_hotels_by_area_and_radius(
     bbox: str,
-    arrival_date: str,
-    departure_date: str,
+    arrival_date: Optional[str] = None,
+    departure_date: Optional[str] = None,
     star_rating: str = "3,4,5",
     room_qty: int = 1,
     guest_qty: int = 1,
@@ -97,7 +169,7 @@ def get_hotels_by_area_and_radius(
     offset: int = 0
 ) -> list:
     """
-    Fetch hotel listings within a bounding box and return only key fields, sorted by distance to bbox center.
+    Fetch hotel listings within a bounding box, sorted by distance to its center. If no dates are provided, use today's date as `arrival_date` and tomorrow's as `departure_date`.
 
     Parameters:
         - bbox (str): Bounding box in format "min_lat,max_lat,min_lng,max_lng"
@@ -118,6 +190,14 @@ def get_hotels_by_area_and_radius(
     Returns:
         - list of hotel dicts sorted by ascending distance from bbox center.
     """
+    
+    today = datetime.today()
+    
+    if not arrival_date:
+        arrival_date = today.strftime("%Y-%m-%d")
+        
+    if not departure_date:
+        departure_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Convert star_rating to API-compatible format
     categories_filter = ",".join([f"class::{s.strip()}" for s in star_rating.split(",")])
@@ -192,6 +272,8 @@ def get_hotels_by_area_and_radius(
             "is_mobile_deal": item.get("is_mobile_deal"),
             "checkin_from": item.get("checkin", {}).get("from"),
             "checkout_until": item.get("checkout", {}).get("until"),
+            "arrival_date": arrival_date,
+            "departure_date": departure_date,
             "distance_km": round(distance_km, 2)
         })
 
@@ -247,6 +329,7 @@ def get_weather(city: str) -> dict:
         return {"error": f"Failed to get weather: {response.text}"}
     
     data = response.json()
+    lat, lon = get_geocode_locationiq(city)
     
     return {
         "city": data.get("name"),
@@ -264,10 +347,11 @@ def get_weather(city: str) -> dict:
         "cloud_coverage_percent": data.get("clouds", {}).get("all"),
         "sunrise_utc": data.get("sys", {}).get("sunrise"),
         "sunset_utc": data.get("sys", {}).get("sunset"),
-        "icon": data.get("weather", [{}])[0].get("icon")
+        "icon": data.get("weather", [{}])[0].get("icon"),
+        "latitude": lat,
+        "longitude": lon,
+        
     }
-
-
 
 @tool
 def get_flight_fares(from_code: str, to_code: str, date: str, adult: int = 1, type_: str = "economy") -> list:
