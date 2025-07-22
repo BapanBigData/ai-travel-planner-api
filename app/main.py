@@ -1,55 +1,75 @@
 import os
 os.environ.pop("SSL_CERT_FILE", None)
 
-from fastapi import FastAPI
-from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
-from app.agent.graph import app as travel_graph
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import FileResponse
-import asyncio
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from uuid import uuid4
+from app.agent.graph import app as travel_graph
+from langchain_core.messages import HumanMessage
 
+
+# Memory store for jobs (in-memory dict for now)
+jobs = {}
+
+# ✅ FastAPI app init
 app = FastAPI()
 
-# ✅ Allow CORS (only needed if frontend runs on separate domain)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can restrict to specific domains
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Serve static files from /frontend
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 class TravelQuery(BaseModel):
     message: str
 
-# ✅ POST endpoint to process travel query
-@app.post("/plan-trip")
-def plan_trip(query: TravelQuery):
+
+# Background processing task
+async def process_trip(job_id: str, message: str):
     try:
-        stream = travel_graph.stream(
-            {"messages": [HumanMessage(content=query.message)]},
-            config={"configurable": {"thread_id": "user-thread"}},
+        stream = travel_graph.astream(
+            {"messages": [HumanMessage(content=message)]},
+            config={"configurable": {"thread_id": f"user-{job_id}"}},
             stream_mode="values"
         )
+
         result = []
-        for event in stream:
+        async for event in stream:
             content = event["messages"][-1].content
             if content:
                 result.append(content)
 
-        return {"response": result[-1] if result else "No response from model."}
-
+        jobs[job_id] = {"status": "done", "response": result[-1] if result else "No response."}
+        
     except Exception as e:
-        print("❌ Error in /plan-trip:", str(e))
-        return {"response": "⚠️ Sorry, something went wrong on the server."}
+        jobs[job_id] = {"status": "error", "response": f"⚠️ Error: {str(e)}"}
 
 
-# ✅ Serve the UI
+# POST to start trip planning
+@app.post("/start-plan-trip")
+async def start_trip(query: TravelQuery, bg: BackgroundTasks):
+    job_id = str(uuid4())
+    jobs[job_id] = {"status": "processing", "response": None}
+    bg.add_task(process_trip, job_id, query.message)
+    return {"job_id": job_id}
+
+
+# Polling endpoint
+@app.get("/get-response/{job_id}")
+async def get_result(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        return {"status": "not_found", "response": "Invalid job ID."}
+    return job
+
+
+# Serve frontend
 @app.get("/")
 def serve_ui():
     return FileResponse("frontend/index.html")

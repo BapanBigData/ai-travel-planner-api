@@ -1,82 +1,39 @@
 import os
 import math
-import requests
+import httpx
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from typing import Optional
 
-
 load_dotenv()
 
-def get_geocode_locationiq(place):
-    url = "https://us1.locationiq.com/v1/search.php"
-    params = {
-        "key": os.getenv("GEOLOCATION_IQ_API_KEY"),  
-        "q": place,
-        "format": "json"
-    }
-    res = requests.get(url, params=params)
-    data = res.json()
-    if data:
-        return float(data[0]["lat"]), float(data[0]["lon"])
-    else:
-        return None
 
+async def get_geocode_locationiq(place):
+    url = "https://us1.locationiq.com/v1/search.php"
+    params = {"key": os.getenv("GEOLOCATION_IQ_API_KEY"), "q": place, "format": "json"}
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, params=params)
+        data = res.json()
+        if data:
+            return float(data[0]["lat"]), float(data[0]["lon"])
+        else:
+            return None
+
+
+async def location_bbox_search(place):
+    url = "https://us1.locationiq.com/v1/search.php"
+    params = {"key": os.getenv("GEOLOCATION_IQ_API_KEY"), "q": place, "format": "json"}
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, params=params)
+        data = res.json()
+        if data:
+            return data
+        else:
+            return None
 
 @tool
-def geocode_locationiq(place: str) -> dict:
-    """
-    Geocode a human-readable place name into geographic coordinates using LocationIQ API.
-
-    This tool takes a location name (e.g., "Park Street, Kolkata" or "USF, Tampa") 
-    and returns geospatial metadata including its bounding box, latitude, longitude, 
-    display name, and location type.
-
-    Parameters:
-        place (str): The name of the location to geocode.
-
-    Returns:
-        dict: A dictionary containing the following keys:
-            - 'boundingbox': List of [min_lat, max_lat, min_lng, max_lng]
-            - 'lat': Latitude of the place (float)
-            - 'lon': Longitude of the place (float)
-            - 'display_name': Full formatted address (str)
-            - 'type': Type of place (e.g., 'university', 'neighbourhood')
-            
-        If geocoding fails, a dictionary with an 'error' key is returned.
-    """
-    
-    url = "https://us1.locationiq.com/v1/search.php"
-    params = {
-        "key": os.getenv("GEOLOCATION_IQ_API_KEY"),
-        "q": place,
-        "format": "json"
-    }
-
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        if not data:
-            return {"error": f"No result found for place: {place}"}
-
-        first_result = data[0]
-        return {
-            "boundingbox": first_result.get("boundingbox"),
-            "lat": float(first_result.get("lat")),
-            "lon": float(first_result.get("lon")),
-            "display_name": first_result.get("display_name"),
-            "type": first_result.get("type")
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@tool
-def get_places(city: str, query: str = "attractions") -> list:
+async def get_places(city: str, query: str = "attractions") -> list:
     """
     Fetches top places (e.g., attractions, restaurants) in a city using the Foursquare Places API
     and returns them as a structured JSON list.
@@ -90,60 +47,44 @@ def get_places(city: str, query: str = "attractions") -> list:
             - name: Place name
             - categories: List of category names
             - address: Formatted address
+            - latitude: latitude of the address 
+            - longitude: longitude of the address 
             - phone: Telephone number if available
             - website: Website URL if available
-"""
+    """
+    
     api_key = os.getenv("FOURSQUARE_API_KEY")
     if not api_key:
         return [{"error": "Missing FOURSQUARE_API_KEY"}]
-
     url = "https://places-api.foursquare.com/places/search"
-    headers = {
-        "accept": "application/json",
-        "X-Places-Api-Version": "2025-06-17",
-        "authorization": api_key
-    }
-    params = {
-        "near": city,
-        "query": query,
-        "limit": 10
-    }
-
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        return [{"error": f"Foursquare API error: {response.text}"}]
-
-    results = response.json().get("results", [])
-    if not results:
-        return [{"message": f"No results found for '{query}' in {city}."}]
-
-    extracted = []
-    for place in results:
-        name = place.get("name", "Unknown")
-        categories = [cat.get("name") for cat in place.get("categories", [])]
-        
-        address = place['location']['formatted_address']
-        lat, lon = get_geocode_locationiq(address)
-        
-        phone = place.get("tel", None)
-        website = place.get("website", None)
-
-        extracted.append({
-            "name": name,
-            "categories": categories,
-            "address": address,
-            "latitude": lat,
-            "longitude": lon,
-            "phone": phone,
-            "website": website
-        })
-
-    return extracted
+    headers = {"accept": "application/json", "X-Places-Api-Version": "2025-06-17", "authorization": api_key}
+    params = {"near": city, "query": query, "limit": 10}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers, params=params)
+        if response.status_code != 200:
+            return [{"error": f"Foursquare API error: {response.text}"}]
+        results = response.json().get("results", [])
+        if not results:
+            return [{"message": f"No results found for '{query}' in {city}."}]
+        extracted = []
+        for place in results:
+            address = place['location']['formatted_address']
+            lat, lon = await get_geocode_locationiq(address)
+            extracted.append({
+                "name": place.get("name", "Unknown"),
+                "categories": [cat.get("name") for cat in place.get("categories", [])],
+                "address": address,
+                "latitude": lat,
+                "longitude": lon,
+                "phone": place.get("tel"),
+                "website": place.get("website")
+            })
+        return extracted
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Calculate great-circle distance between two points on Earth."""
-    R = 6371  # Earth radius in kilometers
+    R = 6371
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
@@ -152,8 +93,8 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 @tool
-def get_hotels_by_area_and_radius(
-    bbox: str,
+async def get_hotels_by_area_and_radius(
+    location: str,
     arrival_date: Optional[str] = None,
     departure_date: Optional[str] = None,
     star_rating: str = "3,4,5",
@@ -169,10 +110,10 @@ def get_hotels_by_area_and_radius(
     offset: int = 0
 ) -> list:
     """
-    Fetch hotel listings within a bounding box, sorted by distance to its center. If no dates are provided, use today's date as `arrival_date` and tomorrow's as `departure_date`.
+    Fetch hotel listings within a location, sorted by distance to its center. If no dates are provided, use today's date as `arrival_date` and tomorrow's as `departure_date`.
 
     Parameters:
-        - bbox (str): Bounding box in format "min_lat,max_lat,min_lng,max_lng"
+        - location (str): The location to search for hotels, such as an area name, locality, or city (e.g., "Koramangala, Bangalore").
         - star_rating (str): Comma-separated star classes to filter, e.g., "3,4,5"
         - arrival_date (str): Check-in date (YYYY-MM-DD)
         - departure_date (str): Check-out date (YYYY-MM-DD)
@@ -191,6 +132,10 @@ def get_hotels_by_area_and_radius(
         - list of hotel dicts sorted by ascending distance from bbox center.
     """
     
+    res = await location_bbox_search(location)
+    bbox = ",".join(res[0]['boundingbox'])
+    
+    
     today = datetime.today()
     
     if not arrival_date:
@@ -199,10 +144,8 @@ def get_hotels_by_area_and_radius(
     if not departure_date:
         departure_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Convert star_rating to API-compatible format
     categories_filter = ",".join([f"class::{s.strip()}" for s in star_rating.split(",")])
 
-    # Compute bbox center
     try:
         min_lat, max_lat, min_lng, max_lng = map(float, bbox.split(","))
         center_lat = (min_lat + max_lat) / 2
@@ -211,7 +154,6 @@ def get_hotels_by_area_and_radius(
         return [{"error": f"Invalid bbox format: {e}"}]
 
     url = "https://apidojo-booking-v1.p.rapidapi.com/properties/list-by-map"
-    
     querystring = {
         "room_qty": str(room_qty),
         "guest_qty": str(guest_qty),
@@ -233,128 +175,87 @@ def get_hotels_by_area_and_radius(
         "x-rapidapi-host": "apidojo-booking-v1.p.rapidapi.com"
     }
 
-    response = requests.get(url, headers=headers, params=querystring)
-    if response.status_code != 200:
-        return [{"error": response.text}]
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers, params=querystring)
+        if response.status_code != 200:
+            return [{"error": response.text}]
 
-    results = response.json().get("result", [])
-    hotels = []
+        results = response.json().get("result", [])
+        hotels = []
 
-    for item in results:
-        if not item.get("class"):
-            continue
+        for item in results:
+            if not item.get("class"):
+                continue
+            lat = item.get("latitude")
+            lng = item.get("longitude")
+            if lat is None or lng is None:
+                continue
 
-        lat = item.get("latitude")
-        lng = item.get("longitude")
-        if lat is None or lng is None:
-            continue
+            distance_km = haversine_distance(center_lat, center_lng, lat, lng)
+            hotels.append({
+                "name": item.get("hotel_name"),
+                "star_rating": item.get("class"),
+                "review_score": item.get("review_score"),
+                "review_word": item.get("review_score_word"),
+                "review_count": item.get("review_nr"),
+                "address": item.get("address"),
+                "city": item.get("city"),
+                "district": item.get("district"),
+                "latitude": lat,
+                "longitude": lng,
+                "price_per_night": item.get("min_total_price") or item.get("price_breakdown", {}).get("all_inclusive_price"),
+                "currency": item.get("currencycode", currency),
+                "image": item.get("main_photo_url"),
+                "booking_url": item.get("url"),
+                "is_free_cancellable": item.get("is_free_cancellable"),
+                "is_mobile_deal": item.get("is_mobile_deal"),
+                "checkin_from": item.get("checkin", {}).get("from"),
+                "checkout_until": item.get("checkout", {}).get("until"),
+                "arrival_date": arrival_date,
+                "departure_date": departure_date,
+                "distance_km": round(distance_km, 2)
+            })
 
-        distance_km = haversine_distance(center_lat, center_lng, lat, lng)
-
-        hotels.append({
-            "name": item.get("hotel_name"),
-            "star_rating": item.get("class"),
-            "review_score": item.get("review_score"),
-            "review_word": item.get("review_score_word"),
-            "review_count": item.get("review_nr"),
-            "address": item.get("address"),
-            "city": item.get("city"),
-            "district": item.get("district"),
-            "latitude": lat,
-            "longitude": lng,
-            "price_per_night": item.get("min_total_price") or (
-                item.get("price_breakdown", {}).get("all_inclusive_price")
-            ),
-            "currency": item.get("currencycode", currency),
-            "image": item.get("main_photo_url"),
-            "booking_url": item.get("url"),
-            "is_free_cancellable": item.get("is_free_cancellable"),
-            "is_mobile_deal": item.get("is_mobile_deal"),
-            "checkin_from": item.get("checkin", {}).get("from"),
-            "checkout_until": item.get("checkout", {}).get("until"),
-            "arrival_date": arrival_date,
-            "departure_date": departure_date,
-            "distance_km": round(distance_km, 2)
-        })
-
-    # Sort by distance from bbox center
-    hotels.sort(key=lambda h: h["distance_km"])
-    return hotels
+        hotels.sort(key=lambda h: h["distance_km"])
+        return hotels
 
 
 @tool
-def convert_currency(amount: float, to_currency: str, base: str = "USD") -> float:
-    """
-    Convert a monetary amount from one currency to another using real-time exchange rates.
-
-    This function fetches the latest exchange rate between the specified base currency
-    and the target currency using the ExchangeRate-API and calculates the converted value.
-
-    Args:
-        amount (float): The amount of money to convert.
-        to_currency (str): The target currency code (e.g., "EUR", "INR").
-        base (str, optional): The source currency code. Defaults to "USD".
-
-    Returns:
-        float: The converted amount in the target currency, rounded to two decimal places.
-                If the exchange rate is unavailable, returns a dictionary with an error message.
-
-    Example:
-        >>> convert_currency(100, "INR")
-        8356.25
-
-    Notes:
-        - This tool uses the open endpoint from https://open.er-api.com.
-        - Ensure that `to_currency` and `base` are valid ISO currency codes.
-    """
-    url = f"https://open.er-api.com/v6/latest/{base}"
-    resp = requests.get(url)
-    data = resp.json()
-    rate = data["rates"].get(to_currency)
-    if not rate:
-        return {"error": f"Rate unavailable for {to_currency}"}
-    return round(amount * rate, 2)
-
-
-
-@tool
-def get_weather(city: str) -> dict:
+async def get_weather(city: str) -> dict:
     """Get detailed current weather data for a city as a dictionary."""
     
     api_key = os.getenv("OPENWEATHER_API_KEY")
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    response = requests.get(url)
-    
-    if response.status_code != 200:
-        return {"error": f"Failed to get weather: {response.text}"}
-    
-    data = response.json()
-    lat, lon = get_geocode_locationiq(city)
-    
-    return {
-        "city": data.get("name"),
-        "country": data.get("sys", {}).get("country"),
-        "description": data.get("weather", [{}])[0].get("description"),
-        "temperature_celsius": data.get("main", {}).get("temp"),
-        "feels_like_celsius": data.get("main", {}).get("feels_like"),
-        "temp_min": data.get("main", {}).get("temp_min"),
-        "temp_max": data.get("main", {}).get("temp_max"),
-        "humidity": data.get("main", {}).get("humidity"),
-        "pressure": data.get("main", {}).get("pressure"),
-        "wind_speed_mps": data.get("wind", {}).get("speed"),
-        "wind_deg": data.get("wind", {}).get("deg"),
-        "visibility_m": data.get("visibility"),
-        "cloud_coverage_percent": data.get("clouds", {}).get("all"),
-        "sunrise_utc": data.get("sys", {}).get("sunrise"),
-        "sunset_utc": data.get("sys", {}).get("sunset"),
-        "icon": data.get("weather", [{}])[0].get("icon"),
-        "latitude": lat,
-        "longitude": lon,
-        
-    }
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        if response.status_code != 200:
+            return {"error": f"Failed to get weather: {response.text}"}
+        data = response.json()
+        lat, lon = await get_geocode_locationiq(city)
+        return {
+            "city": data.get("name"),
+            "country": data.get("sys", {}).get("country"),
+            "description": data.get("weather", [{}])[0].get("description"),
+            "temperature_celsius": data.get("main", {}).get("temp"),
+            "feels_like_celsius": data.get("main", {}).get("feels_like"),
+            "temp_min": data.get("main", {}).get("temp_min"),
+            "temp_max": data.get("main", {}).get("temp_max"),
+            "humidity": data.get("main", {}).get("humidity"),
+            "pressure": data.get("main", {}).get("pressure"),
+            "wind_speed_mps": data.get("wind", {}).get("speed"),
+            "wind_deg": data.get("wind", {}).get("deg"),
+            "visibility_m": data.get("visibility"),
+            "cloud_coverage_percent": data.get("clouds", {}).get("all"),
+            "sunrise_utc": data.get("sys", {}).get("sunrise"),
+            "sunset_utc": data.get("sys", {}).get("sunset"),
+            "icon": data.get("weather", [{}])[0].get("icon"),
+            "latitude": lat,
+            "longitude": lon
+        }
+
 
 @tool
-def get_flight_fares(from_code: str, to_code: str, date: str, adult: int = 1, type_: str = "economy") -> list:
+async def get_flight_fares(from_code: str, to_code: str, date: str, adult: int = 1, type_: str = "economy") -> list:
     """
     Fetches flight fare data using the Flight Fare Search API on RapidAPI.
 
@@ -370,62 +271,39 @@ def get_flight_fares(from_code: str, to_code: str, date: str, adult: int = 1, ty
     """
     
     url = "https://flight-fare-search.p.rapidapi.com/v2/flights"
-
-    querystring = {
-        "from": from_code,
-        "to": to_code,
-        "date": date,
-        "adult": str(adult),
-        "type": type_,
-        "currency": "USD"
-    }
-
+    querystring = {"from": from_code, "to": to_code, "date": date, "adult": str(adult), "type": type_, "currency": "USD"}
     headers = {
         "x-rapidapi-key": os.getenv("RAPIDAPI_KEY_FLIGHTS"),
         "x-rapidapi-host": "flight-fare-search.p.rapidapi.com"
     }
-
-    response = requests.get(url, headers=headers, params=querystring)
-    # print("🔍 Raw API response:", response.status_code, response.text)
-
-    try:
-        raw = response.json()
-        flights = raw.get("results", [])
-        if not isinstance(flights, list) or not flights:
-            return [{"message": "No flights found."}]
-
-        results = []
-        for f in flights:
-            stop_info = []
-            stop_summary = f.get("stopSummary", {})
-
-            # Extract intermediate stops if present
-            if isinstance(stop_summary, dict):
-                for key, val in stop_summary.items():
-                    if key != "connectingTime" and isinstance(val, dict):
-                        stop_info.append({
-                            "intermediate_airport": val.get("airport", "Unknown"),
-                            "stop_duration_minutes": val.get("stopDuration")
-                        })
-
-            results.append({
-                "flight_code": f.get("flight_code"),
-                "airline": f.get("flight_name"),
-                "cabin_type": f.get("cabinType", "Unknown"),
-                "stops": f.get("stops", "Unknown"),
-                "departure_city": f.get("departureAirport", {}).get("city"),
-                "departure_country": f.get("departureAirport", {}).get("country", {}).get("label"),
-                "departure_time": f.get("departureAirport", {}).get("time"),
-                "arrival_city": f.get("arrivalAirport", {}).get("city"),
-                "arrival_country": f.get("arrivalAirport", {}).get("country", {}).get("label"),
-                "arrival_time": f.get("arrivalAirport", {}).get("time"),
-                "duration": f.get("duration", {}).get("text"),
-                "price": f.get("totals", {}).get("total"),
-                "currency": f.get("totals", {}).get("currency"),
-                "intermediate_stops": stop_info if stop_info else None
-            })
-
-        return results
-
-    except Exception as e:
-        return [{"error": str(e)}]
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers, params=querystring)
+        try:
+            raw = response.json()
+            flights = raw.get("results", [])
+            if not isinstance(flights, list) or not flights:
+                return [{"message": "No flights found."}]
+            results = []
+            for f in flights:
+                stop_summary = f.get("stopSummary", {})
+                stop_info = [{"intermediate_airport": val.get("airport", "Unknown"), "stop_duration_minutes": val.get("stopDuration")}
+                                for key, val in stop_summary.items() if key != "connectingTime" and isinstance(val, dict)]
+                results.append({
+                    "flight_code": f.get("flight_code"),
+                    "airline": f.get("flight_name"),
+                    "cabin_type": f.get("cabinType", "Unknown"),
+                    "stops": f.get("stops", "Unknown"),
+                    "departure_city": f.get("departureAirport", {}).get("city"),
+                    "departure_country": f.get("departureAirport", {}).get("country", {}).get("label"),
+                    "departure_time": f.get("departureAirport", {}).get("time"),
+                    "arrival_city": f.get("arrivalAirport", {}).get("city"),
+                    "arrival_country": f.get("arrivalAirport", {}).get("country", {}).get("label"),
+                    "arrival_time": f.get("arrivalAirport", {}).get("time"),
+                    "duration": f.get("duration", {}).get("text"),
+                    "price": f.get("totals", {}).get("total"),
+                    "currency": f.get("totals", {}).get("currency"),
+                    "intermediate_stops": stop_info if stop_info else None
+                })
+            return results
+        except Exception as e:
+            return [{"error": str(e)}]
