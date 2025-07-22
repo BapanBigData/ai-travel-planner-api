@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage
 # Memory store for jobs (in-memory dict for now)
 jobs = {}
 
-# ✅ FastAPI app init
+
 app = FastAPI()
 
 
@@ -48,7 +48,7 @@ async def process_trip(job_id: str, message: str):
         jobs[job_id] = {"status": "done", "response": result[-1] if result else "No response."}
         
     except Exception as e:
-        jobs[job_id] = {"status": "error", "response": f"⚠️ Error: {str(e)}"}
+        jobs[job_id] = {"status": "error", "response": f"Error: {str(e)}"}
 
 
 # POST to start trip planning
